@@ -1,0 +1,53 @@
+{
+  "name": "antigravity-codex-mcp",
+  "version": "0.3.0",
+  "private": true,
+  "description": "A controlled MCP bridge that lets Codex delegate analysis, review, and isolated implementation tasks to Antigravity CLI.",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "codex",
+    "antigravity",
+    "agent",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ustc-fyk/antigravity-codex-mcp.git"
+  },
+  "homepage": "https://github.com/ustc-fyk/antigravity-codex-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/ustc-fyk/antigravity-codex-mcp/issues"
+  },
+  "files": [
+    "src/",
+    "skills/",
+    "README.md",
+    "readme_zh.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "antigravity-codex-mcp": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/unit.test.js",
+    "smoke:mcp": "node test/mcp-smoke.js",
+    "smoke:live": "node test/mcp-smoke.js --live",
+    "smoke:execute": "node test/mcp-smoke.js --execute",
+    "smoke:project": "node test/project-acceptance.js",
+    "smoke:continue": "node test/continue-acceptance.js",
+    "smoke:transcript": "node test/transcript-acceptance.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0"
+  }
+}

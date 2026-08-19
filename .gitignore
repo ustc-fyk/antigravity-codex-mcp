@@ -1,0 +1,17 @@
+node_modules/
+npm-debug.log*
+.antigravity-mcp/
+.skill-validation-libs/
+backups/
+.codex/
+work_ws/
+.env
+.env.*
+!.env.example
+coverage/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
