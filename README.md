@@ -45,42 +45,86 @@ npm test
 
 Add the server to your Codex `config.toml`. Replace the example paths with the absolute clone path on your machine:
 
+**Linux / macOS:**
+
 ```toml
 [mcp_servers.antigravity]
-command = 'node'
+command = "node"
+args = ["/path/to/antigravity-codex-mcp/src/index.js"]
+cwd = "/path/to/antigravity-codex-mcp"
+enabled = true
+required = false
+startup_timeout_sec = 20
+tool_timeout_sec = 900
+default_tools_approval_mode = "prompt"
+enabled_tools = [
+  "antigravity_health",
+  "antigravity_project_status",
+  "antigravity_enable_project",
+  "antigravity_disable_project",
+  "antigravity_start_session",
+  "antigravity_get_active_session",
+  "antigravity_list_sessions",
+  "antigravity_sync_conversation",
+  "antigravity_get_transcript",
+  "antigravity_ask",
+  "antigravity_continue",
+  "antigravity_review",
+  "antigravity_execute",
+  "antigravity_list_runs",
+  "antigravity_get_run",
+]
+
+# Optional when agy is not available on PATH:
+# [mcp_servers.antigravity.env]
+# AGY_BIN = "/path/to/agy"
+```
+
+**Windows:**
+
+```toml
+[mcp_servers.antigravity]
+command = "node"
 args = ['C:\path\to\antigravity-codex-mcp\src\index.js']
 cwd = 'C:\path\to\antigravity-codex-mcp'
 enabled = true
 required = false
 startup_timeout_sec = 20
 tool_timeout_sec = 900
-default_tools_approval_mode = 'prompt'
+default_tools_approval_mode = "prompt"
 enabled_tools = [
-  'antigravity_health',
-  'antigravity_project_status',
-  'antigravity_enable_project',
-  'antigravity_disable_project',
-  'antigravity_start_session',
-  'antigravity_get_active_session',
-  'antigravity_list_sessions',
-  'antigravity_sync_conversation',
-  'antigravity_get_transcript',
-  'antigravity_ask',
-  'antigravity_continue',
-  'antigravity_review',
-  'antigravity_execute',
-  'antigravity_list_runs',
-  'antigravity_get_run',
+  "antigravity_health",
+  "antigravity_project_status",
+  "antigravity_enable_project",
+  "antigravity_disable_project",
+  "antigravity_start_session",
+  "antigravity_get_active_session",
+  "antigravity_list_sessions",
+  "antigravity_sync_conversation",
+  "antigravity_get_transcript",
+  "antigravity_ask",
+  "antigravity_continue",
+  "antigravity_review",
+  "antigravity_execute",
+  "antigravity_list_runs",
+  "antigravity_get_run",
 ]
 
 # Optional when agy is not available on PATH:
-[mcp_servers.antigravity.env]
-AGY_BIN = 'C:\path\to\agy.exe'
+# [mcp_servers.antigravity.env]
+# AGY_BIN = 'C:\path\to\agy.exe'
 ```
 
-On macOS or Linux, use the corresponding absolute POSIX paths and normally omit `AGY_BIN` when `agy` is on `PATH`.
-
 Install the included Codex Skill so Codex follows the opt-in workflow:
+
+**Linux / macOS (Bash):**
+
+```bash
+mkdir -p ~/.codex/skills/agy-project-assistant
+cp ./skills/agy-project-assistant/SKILL.md ~/.codex/skills/agy-project-assistant/
+```
+
+**Windows (PowerShell):**
 
 ```powershell
 $skillRoot = Join-Path $env:USERPROFILE ".codex\skills\agy-project-assistant"
