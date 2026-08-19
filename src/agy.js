@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { stat, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 
 const DEFAULT_AGY_BIN = "agy";
@@ -10,6 +11,7 @@ const MAX_RESPONSE_CHARS = 50_000;
 
 const SAFE_ENV_NAMES = new Set(
   [
+    "ALL_PROXY",
     "APPDATA",
     "COMSPEC",
     "HOMEDRIVE",
@@ -19,20 +21,33 @@ const SAFE_ENV_NAMES = new Set(
     "LANG",
     "LC_ALL",
     "LOCALAPPDATA",
+    "LOGNAME",
+    "NODE_EXTRA_CA_CERTS",
     "NO_PROXY",
     "PATH",
     "PATHEXT",
     "PROGRAMDATA",
     "PROGRAMFILES",
     "PROGRAMFILES(X86)",
+    "SHELL",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
     "SYSTEMDRIVE",
     "SYSTEMROOT",
     "TEMP",
+    "TERM",
     "TMP",
+    "TMPDIR",
+    "USER",
     "USERDOMAIN",
     "USERNAME",
     "USERPROFILE",
-    "WINDIR"
+    "WINDIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "XDG_STATE_HOME"
   ].map((name) => name.toUpperCase())
 );
 
@@ -104,6 +119,9 @@ export function buildSafeChildEnv() {
     if (SAFE_ENV_NAMES.has(upperName) || extraNames.has(upperName)) {
       childEnv[name] = value;
     }
+  }
+  if (process.platform !== "win32" && !childEnv.HOME) {
+    childEnv.HOME = homedir();
   }
   return childEnv;
 }

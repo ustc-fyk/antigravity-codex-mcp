@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import {
+  chmod,
   copyFile,
   lstat,
   mkdir,
@@ -308,8 +309,19 @@ export async function applyStructuredOperations(isolatedWorkspace, structuredOut
     if (totalCharacters > MAX_PATCH_CHARACTERS) {
       throw new Error("Antigravity patch exceeds the 2,000,000 character safety limit");
     }
+    let existingMode = null;
+    try {
+      const currentStat = await stat(destination);
+      existingMode = currentStat.mode;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+
     await mkdir(path.dirname(destination), { recursive: true });
     await writeFile(destination, operation.content, "utf8");
+    if (existingMode !== null) {
+      await chmod(destination, existingMode).catch(() => {});
+    }
     applied.push(relativePath);
   }
   return applied;

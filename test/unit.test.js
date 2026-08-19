@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   buildAgyArgs,
+  buildSafeChildEnv,
   isPathWithin,
   parseAgyJson,
   parseAgyStreamJson,
   sanitizeDiagnostic
 } from "../src/agy.js";
-import { collectChanges, shouldCopyRelative } from "../src/execution.js";
+import {
+  applyStructuredOperations,
+  collectChanges,
+  shouldCopyRelative
+} from "../src/execution.js";
 import {
   appendSessionEvent,
   canonicalProjectRoot,
@@ -28,15 +34,15 @@ import {
 } from "../src/transcripts.js";
 
 test("isPathWithin accepts a root and descendants", () => {
-  const root = path.resolve("E:/Destop/antigravity_ws");
+  const root = path.resolve(tmpdir(), "antigravity_ws");
   assert.equal(isPathWithin(root, root), true);
   assert.equal(isPathWithin(path.join(root, "src"), root), true);
 });
 
 test("isPathWithin rejects sibling prefix tricks", () => {
-  const root = path.resolve("E:/Destop/antigravity_ws");
-  assert.equal(isPathWithin(path.resolve("E:/Destop/antigravity_ws-evil"), root), false);
-  assert.equal(isPathWithin(path.resolve("E:/Destop"), root), false);
+  const root = path.resolve(tmpdir(), "antigravity_ws");
+  assert.equal(isPathWithin(path.resolve(tmpdir(), "antigravity_ws-evil"), root), false);
+  assert.equal(isPathWithin(path.resolve(tmpdir()), root), false);
 });
 
 test("buildAgyArgs preserves plan expansion while enforcing sandbox and JSON", () => {
@@ -74,6 +80,12 @@ test("buildAgyArgs can disable slash expansion outside plan mode", () => {
     disableSlashCommands: true
   });
   assert.ok(args.includes("--disable-slash-commands"));
+});
+
+test("buildSafeChildEnv provides a home directory to AGY on POSIX", () => {
+  if (process.platform === "win32") return;
+  const childEnv = buildSafeChildEnv();
+  assert.equal(childEnv.HOME, process.env.HOME || homedir());
 });
 
 test("parseAgyJson accepts a clean envelope", () => {
@@ -357,3 +369,58 @@ test("dynamic project enable, session persistence, and disable are isolated", as
     }
   }
 });
+
+test("buildSafeChildEnv passes through Linux and standard POSIX environment variables", () => {
+  const previousEnv = { ...process.env };
+  try {
+    process.env.TMPDIR = "/custom/tmp";
+    process.env.USER = "testuser";
+    process.env.SHELL = "/bin/bash";
+    process.env.ALL_PROXY = "socks5://127.0.0.1:1080";
+    process.env.XDG_CONFIG_HOME = "/custom/config";
+    const childEnv = buildSafeChildEnv();
+    assert.equal(childEnv.TMPDIR, "/custom/tmp");
+    assert.equal(childEnv.USER, "testuser");
+    assert.equal(childEnv.SHELL, "/bin/bash");
+    assert.equal(childEnv.ALL_PROXY, "socks5://127.0.0.1:1080");
+    assert.equal(childEnv.XDG_CONFIG_HOME, "/custom/config");
+  } finally {
+    process.env = previousEnv;
+  }
+});
+
+test("canonicalProjectRoot rejects POSIX system directories", async () => {
+  if (process.platform === "win32") return;
+  for (const sysDir of ["/etc", "/usr", "/tmp", "/var"]) {
+    await assert.rejects(
+      () => canonicalProjectRoot(sysDir),
+      /broad or system/
+    );
+  }
+});
+
+test("applyStructuredOperations preserves executable file mode", async () => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "agy-exec-mode-"));
+  try {
+    const scriptPath = path.join(temporaryRoot, "script.sh");
+    await writeFile(scriptPath, "#!/bin/sh\necho 1\n", { mode: 0o755 });
+    const beforeStat = await stat(scriptPath);
+
+    await applyStructuredOperations(temporaryRoot, {
+      summary: "update script",
+      operations: [
+        { path: "script.sh", content: "#!/bin/sh\necho 2\n" }
+      ]
+    });
+
+    const afterStat = await stat(scriptPath);
+    const updatedContent = await readFile(scriptPath, "utf8");
+    assert.equal(updatedContent, "#!/bin/sh\necho 2\n");
+    if (process.platform !== "win32") {
+      assert.equal(afterStat.mode & 0o777, beforeStat.mode & 0o777);
+    }
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+

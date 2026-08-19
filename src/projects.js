@@ -93,6 +93,30 @@ async function pathExists(filePath) {
   }
 }
 
+const POSIX_SYSTEM_DIRS = [
+  "/",
+  "/bin",
+  "/boot",
+  "/dev",
+  "/etc",
+  "/lib",
+  "/lib32",
+  "/lib64",
+  "/libx32",
+  "/media",
+  "/mnt",
+  "/opt",
+  "/proc",
+  "/root",
+  "/run",
+  "/sbin",
+  "/srv",
+  "/sys",
+  "/tmp",
+  "/usr",
+  "/var"
+];
+
 export async function canonicalProjectRoot(input) {
   if (!input || typeof input !== "string") {
     throw new Error("project_root is required");
@@ -112,6 +136,11 @@ export async function canonicalProjectRoot(input) {
     process.env.LOCALAPPDATA,
     process.env.APPDATA
   ].filter(Boolean);
+
+  if (process.platform !== "win32") {
+    broadRoots.push(...POSIX_SYSTEM_DIRS);
+  }
+
   if (broadRoots.some((root) => samePath(canonical, root))) {
     throw new Error(`Refusing broad or system project root: ${canonical}`);
   }
