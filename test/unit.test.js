@@ -424,7 +424,11 @@ test("project enable recovers a settings lock left by a dead process", async () 
 });
 
 test("buildSafeChildEnv passes through Linux and standard POSIX environment variables", () => {
-  const previousEnv = { ...process.env };
+  const previousTmpdir = process.env.TMPDIR;
+  const previousUser = process.env.USER;
+  const previousShell = process.env.SHELL;
+  const previousProxy = process.env.ALL_PROXY;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
   try {
     process.env.TMPDIR = "/custom/tmp";
     process.env.USER = "testuser";
@@ -438,7 +442,16 @@ test("buildSafeChildEnv passes through Linux and standard POSIX environment vari
     assert.equal(childEnv.ALL_PROXY, "socks5://127.0.0.1:1080");
     assert.equal(childEnv.XDG_CONFIG_HOME, "/custom/config");
   } finally {
-    process.env = previousEnv;
+    if (previousTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTmpdir;
+    if (previousUser === undefined) delete process.env.USER;
+    else process.env.USER = previousUser;
+    if (previousShell === undefined) delete process.env.SHELL;
+    else process.env.SHELL = previousShell;
+    if (previousProxy === undefined) delete process.env.ALL_PROXY;
+    else process.env.ALL_PROXY = previousProxy;
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
   }
 });
 

@@ -123,7 +123,7 @@ export async function canonicalProjectRoot(input) {
   const info = await stat(canonical);
   if (!info.isDirectory()) throw new Error(`Project root is not a directory: ${canonical}`);
 
-  const broadRoots = [
+  const rawBroadRoots = [
     path.parse(canonical).root,
     homedir(),
     process.env.SYSTEMROOT,
@@ -136,7 +136,17 @@ export async function canonicalProjectRoot(input) {
   ].filter(Boolean);
 
   if (process.platform !== "win32") {
-    broadRoots.push(...POSIX_SYSTEM_DIRS);
+    rawBroadRoots.push(...POSIX_SYSTEM_DIRS);
+  }
+
+  const broadRoots = [];
+  for (const candidate of rawBroadRoots) {
+    broadRoots.push(candidate);
+    try {
+      broadRoots.push(await realpath(candidate));
+    } catch {
+      // Ignore directories that do not exist on the current system.
+    }
   }
 
   if (broadRoots.some((root) => samePath(canonical, root))) {
