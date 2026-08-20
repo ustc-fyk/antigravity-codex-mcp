@@ -18,7 +18,8 @@ const PROJECT_DIR = ".antigravity-mcp";
 const PROJECT_FILE = "project.json";
 const SESSIONS_FILE = "sessions.jsonl";
 const STATE_SCHEMA_VERSION = 2;
-const MCP_VERSION = "0.3.0";
+const MCP_VERSION = "0.4.0";
+const SETTINGS_LOCK_STALE_MS = 120_000;
 
 function normalizeForComparison(value) {
   const normalized = path.resolve(value).replace(/[\\/]+$/, "");
@@ -61,16 +62,13 @@ export async function ensureProjectIgnoreRules(projectRootInput) {
     if (error?.code === "ENOENT") return "";
     throw error;
   });
-  const ignoreLines = ignoreContent.split(/\r?\n/).filter(Boolean);
-  let changed = false;
-  for (const rule of ["runs/", "transcripts/", "*.tmp-*"]) {
-    if (!ignoreLines.includes(rule)) {
-      ignoreLines.push(rule);
-      changed = true;
-    }
-  }
-  if (changed || !ignoreContent) {
-    await writeFile(ignorePath, `${ignoreLines.join("\n")}\n`, "utf8");
+  const managedContent = [
+    "# Managed by antigravity-codex-mcp. All project-local state is private.",
+    "*",
+    ""
+  ].join("\n");
+  if (ignoreContent !== managedContent) {
+    await writeFile(ignorePath, managedContent, "utf8");
   }
   return ignorePath;
 }
@@ -173,11 +171,63 @@ async function acquireSettingsLock(settingsPath) {
   while (true) {
     try {
       const handle = await open(lockPath, "wx");
+      try {
+        await handle.writeFile(
+          `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`,
+          "utf8"
+        );
+      } catch (error) {
+        await handle.close().catch(() => {});
+        await unlink(lockPath).catch(() => {});
+        throw error;
+      }
       return { handle, lockPath };
     } catch (error) {
-      if (error?.code !== "EEXIST" || Date.now() >= deadline) throw error;
+      if (error?.code !== "EEXIST") throw error;
+      if (await quarantineStaleSettingsLock(lockPath)) continue;
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for active settings lock: ${lockPath}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+  }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
+async function quarantineStaleSettingsLock(lockPath) {
+  let lockInfo;
+  let metadata = null;
+  try {
+    lockInfo = await stat(lockPath);
+    metadata = JSON.parse(await readFile(lockPath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return true;
+  }
+
+  const ageMs = lockInfo ? Date.now() - lockInfo.mtimeMs : 0;
+  const recordedPid = Number(metadata?.pid);
+  const stale = Number.isInteger(recordedPid)
+    ? !isProcessAlive(recordedPid)
+    : ageMs >= SETTINGS_LOCK_STALE_MS;
+  if (!stale) return false;
+
+  const quarantinePath = `${lockPath}.stale-${randomUUID()}`;
+  try {
+    await rename(lockPath, quarantinePath);
+    await unlink(quarantinePath).catch(() => {});
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return true;
+    return false;
   }
 }
 

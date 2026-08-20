@@ -1,6 +1,6 @@
 {
   "name": "antigravity-codex-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "A controlled MCP bridge that lets Codex delegate analysis, review, and isolated implementation tasks to Antigravity CLI.",
   "license": "MIT",

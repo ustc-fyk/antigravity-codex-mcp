@@ -199,7 +199,24 @@ Isolated implementation rejects:
 - more than 50 changed files;
 - more than 2,000,000 replacement characters.
 
+Any dependency, cache, virtual-environment, build, or metadata directory is excluded at every nesting depth, including monorepo packages. Project-local state uses a managed `*` rule so `project.json`, `sessions.jsonl`, runs, and transcripts are all ignored by Git.
+
+Verification is an explicit high-risk operation: a non-`none` `verification` value also requires `allow_untrusted_verification: true`. Commands such as `npm test` or `pytest` execute code from the AGY-influenced isolated workspace. The isolated directory protects the source tree, but it is not an OS security sandbox. The combined AGY and verification timeout budget is capped below the recommended 900-second MCP timeout.
+
+AGY and verification timeouts terminate the full spawned process tree. Health checks have a 15-second default timeout and a 64 KiB output limit. Settings locks contain PID/timestamp metadata and dead-process locks are recovered automatically.
+
 The transcript pipeline recursively removes private reasoning fields and excludes system/checkpoint records before writing the project mirror. See [SECURITY.md](SECURITY.md) for reporting guidance and limitations.
+
+### Operator environment variables
+
+- `AGY_BIN`: AGY executable path; defaults to `agy` on `PATH`.
+- `AGY_HEALTH_TIMEOUT_MS`: health-check timeout, clamped to 100–60,000 ms.
+- `ANTIGRAVITY_SETTINGS_PATH`: override the AGY settings file path.
+- `ANTIGRAVITY_CLI_DATA_DIR`: override the AGY CLI data root used for transcript lookup.
+- `ANTIGRAVITY_ALLOWED_ROOTS`: static path-delimited root fence in addition to dynamic project authorization.
+- `ANTIGRAVITY_USE_SANDBOX`: request AGY CLI's optional sandbox mode.
+- `ANTIGRAVITY_PASSTHROUGH_ENV`: comma-separated extra environment-variable names. Names that look sensitive are rejected by default.
+- `ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH`: high-risk override for sensitive extra names; use only after explicit risk acceptance.
 
 ## Development
 

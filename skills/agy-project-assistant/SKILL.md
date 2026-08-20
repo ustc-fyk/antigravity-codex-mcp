@@ -27,7 +27,7 @@ Use the globally available Antigravity MCP as an idle bridge. Never initialize, 
 - Before a follow-up, use `antigravity_sync_conversation` when the user may have interacted through AGY CLI. `antigravity_continue` also synchronizes before and after its model call.
 - Use `antigravity_continue` for follow-ups in the active conversation. Inspect `transcriptSync.before.records` for messages added through AGY CLI.
 - Use `antigravity_review` for an independent correctness, regression, security, or test-gap review.
-- Use `antigravity_execute` for implementation. It may modify only an isolated copy and must never merge automatically.
+- Use `antigravity_execute` for implementation. It may modify only an isolated copy and must never merge automatically. Keep `verification: "none"` unless the user explicitly accepts execution of AGY-influenced code; only then set `allow_untrusted_verification: true` with a bounded verification timeout.
 - Prefer Codex itself for small tasks whose delegation overhead would exceed the work.
 
 After every model call, report the exact `project_root` and `conversation_id`. After implementation, also report `run_id`, isolated workspace path, changed files, and verification status. Verify AGY conclusions independently before applying anything to source.
@@ -52,5 +52,6 @@ When the user asks to disable, unload, revoke, or stop AGY for the current proje
 - Never add AGY write, command, URL, or MCP permissions.
 - Never use dangerous auto-approval flags.
 - Never apply isolated changes to source without Codex review and appropriate user authorization.
+- Never enable non-`none` verification without explicit user risk acceptance. Verification commands execute code from the AGY-influenced isolated workspace and are not an OS sandbox.
 - Never request, expose, reconstruct, or persist AGY private thinking or chain-of-thought. Use only visible messages, final answers, and sanitized tool traces.
 - Transcript synchronization is on demand. Avoid concurrent sends from Codex and an interactive AGY CLI in the same conversation.

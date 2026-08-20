@@ -17,7 +17,8 @@ import {
   buildSafeChildEnv,
   isPathWithin,
   runAgy,
-  sanitizeDiagnostic
+  sanitizeDiagnostic,
+  terminateProcessTree
 } from "./agy.js";
 import {
   canonicalProjectRoot,
@@ -55,7 +56,7 @@ const PATCH_SCHEMA = {
   required: ["summary", "operations"]
 };
 
-const EXCLUDED_TOP_LEVEL = new Set([
+const EXCLUDED_DIRECTORY_NAMES = new Set([
   ".antigravity-mcp",
   ".codex",
   ".git",
@@ -105,8 +106,11 @@ function isSensitiveFileName(name) {
 
 export function shouldCopyRelative(relativePath) {
   if (!relativePath) return true;
-  const parts = relativePath.split(path.sep).filter(Boolean);
-  if (EXCLUDED_TOP_LEVEL.has(parts[0])) return false;
+  if (process.platform !== "win32" && relativePath.includes("\\")) return false;
+  const parts = relativePath.split(/[\\/]+/).filter(Boolean);
+  if (parts.some((part) => EXCLUDED_DIRECTORY_NAMES.has(part.toLowerCase()))) {
+    return false;
+  }
   return !parts.some((part) => isSensitiveFileName(part));
 }
 
@@ -227,6 +231,7 @@ async function runVerification(kind, cwd, timeoutSeconds) {
       env: buildSafeChildEnv(),
       shell: false,
       windowsHide: true,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"]
     });
     const append = (target, chunk) => {
@@ -239,8 +244,8 @@ async function runVerification(kind, cwd, timeoutSeconds) {
     };
     const timer = setTimeout(() => {
       if (settled) return;
-      child.kill();
       settled = true;
+      void terminateProcessTree(child);
       resolve({ kind, status: "timeout", exitCode: null, output: "" });
     }, timeoutSeconds * 1_000);
     child.stdout.on("data", (chunk) => append(stdout, chunk));
@@ -335,8 +340,14 @@ export async function executeIsolated({
   timeoutSeconds = 600,
   maxResponseChars = 12000,
   verification = "none",
-  verificationTimeoutSeconds = 300
+  verificationTimeoutSeconds = 300,
+  allowUntrustedVerification = false
 }) {
+  if (verification !== "none" && !allowUntrustedVerification) {
+    throw new Error(
+      "Verification executes AGY-influenced project code. Set allow_untrusted_verification=true only after the user explicitly accepts that risk."
+    );
+  }
   const source = await requireEnabledProject(projectRoot);
   const runsRoot = getProjectRunsRoot(source);
   await mkdir(runsRoot, { recursive: true });
@@ -473,8 +484,13 @@ function validateRunId(runId) {
 export async function listRuns(projectRootInput, limit = 20) {
   const projectRoot = await canonicalProjectRoot(projectRootInput);
   const runsRoot = getProjectRunsRoot(projectRoot);
-  await mkdir(runsRoot, { recursive: true });
-  const entries = await readdir(runsRoot, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(runsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
   const runs = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !RUN_ID_PATTERN.test(entry.name)) continue;

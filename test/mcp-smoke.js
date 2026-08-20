@@ -21,7 +21,7 @@ await writeFile(temporarySettings, "{}\n", "utf8");
 await writeFile(path.join(temporaryProject, "message.txt"), "BEFORE\n", "utf8");
 
 const projectRoot = useLiveProject ? repositoryRoot : temporaryProject;
-const client = new Client({ name: "antigravity-mcp-smoke", version: "0.3.0" });
+const client = new Client({ name: "antigravity-mcp-smoke", version: "0.4.0" });
 
 try {
   await client.connect(
@@ -58,6 +58,8 @@ try {
     "antigravity_start_session",
     "antigravity_sync_conversation"
   ]);
+  const executeTool = tools.find((tool) => tool.name === "antigravity_execute");
+  assert.ok(executeTool.inputSchema.properties.allow_untrusted_verification);
 
   const health = await client.callTool({
     name: "antigravity_health",

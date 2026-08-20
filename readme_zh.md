@@ -199,7 +199,24 @@ agy --conversation=<conversation_id>
 - 超过 50 个变更文件；
 - 超过 2,000,000 个替换字符。
 
+依赖、缓存、虚拟环境、构建产物和元数据目录会在任意嵌套层级被排除，包含 Monorepo 子包。项目状态目录使用托管的 `*` 规则，因此 `project.json`、`sessions.jsonl`、runs 和 transcripts 都会被 Git 忽略。
+
+验证属于显式高风险操作：只要 `verification` 不是 `none`，还必须设置 `allow_untrusted_verification: true`。`npm test`、`pytest` 等命令会执行 AGY 影响过的隔离工作区代码。隔离目录能保护源代码树，但不等于 OS 安全沙箱。AGY 与验证的合计超时预算被限制在推荐的 900 秒 MCP 超时以内。
+
+AGY 和验证超时会终止完整子进程树。健康检查默认 15 秒超时，输出上限 64 KiB。settings 锁会记录 PID 和时间，持锁进程死亡后可自动恢复。
+
 transcript 管线会递归移除内部推理字段，并排除系统消息和检查点，然后才写入项目镜像。漏洞报告方式和安全限制见 [SECURITY.md](SECURITY.md)。
+
+### 运行环境变量
+
+- `AGY_BIN`：AGY 可执行文件路径，默认使用 `PATH` 中的 `agy`。
+- `AGY_HEALTH_TIMEOUT_MS`：健康检查超时，限制为 100–60,000 毫秒。
+- `ANTIGRAVITY_SETTINGS_PATH`：覆盖 AGY settings 文件路径。
+- `ANTIGRAVITY_CLI_DATA_DIR`：覆盖 transcript 查找所用的 AGY CLI 数据根目录。
+- `ANTIGRAVITY_ALLOWED_ROOTS`：除动态项目授权外的静态根目录围栏。
+- `ANTIGRAVITY_USE_SANDBOX`：请求 AGY CLI 使用可选 sandbox 模式。
+- `ANTIGRAVITY_PASSTHROUGH_ENV`：额外透传的环境变量名，以逗号分隔；疑似敏感变量名默认拒绝。
+- `ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH`：敏感变量透传的高风险开关，只能在明确接受风险后使用。
 
 ## 开发与测试
 

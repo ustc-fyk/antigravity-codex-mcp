@@ -17,7 +17,26 @@ import {
   syncConversationTranscript
 } from "./transcripts.js";
 
-const BRIDGE_VERSION = "0.3.0";
+const BRIDGE_VERSION = "0.4.0";
+const MAX_MODEL_TIMEOUT_SECONDS = 825;
+const MAX_EXECUTION_BUDGET_SECONDS = 840;
+
+export function validateExecutionTimeoutBudget(
+  timeoutSeconds,
+  verification,
+  verificationTimeoutSeconds
+) {
+  const totalBudget =
+    timeoutSeconds +
+    15 +
+    (verification === "none" ? 0 : verificationTimeoutSeconds);
+  if (totalBudget > MAX_EXECUTION_BUDGET_SECONDS) {
+    throw new Error(
+      `Combined AGY and verification timeout budget must not exceed ${MAX_EXECUTION_BUDGET_SECONDS}s`
+    );
+  }
+  return totalBudget;
+}
 
 const uuidSchema = z
   .string()
@@ -39,7 +58,12 @@ const sharedModelInput = {
     .optional()
     .describe("Optional Antigravity model slug; omit to use the account default."),
   effort: z.enum(["low", "medium", "high"]).optional(),
-  timeout_seconds: z.number().int().min(10).max(1800).default(300),
+  timeout_seconds: z
+    .number()
+    .int()
+    .min(10)
+    .max(MAX_MODEL_TIMEOUT_SECONDS)
+    .default(300),
   max_response_chars: z.number().int().min(1000).max(50000).default(12000)
 };
 
@@ -543,18 +567,29 @@ export function createServer() {
     {
       title: "Execute a task in an isolated AGY workspace",
       description:
-        "For an enabled project, ask AGY for schema-validated file replacements, apply only validated paths to a disposable copy, optionally run one fixed verification, and never merge into source.",
+        "For an enabled project, ask AGY for schema-validated file replacements, apply only validated paths to a disposable copy, and never merge into source. Verification executes AGY-influenced code and requires explicit risk acceptance.",
       inputSchema: z.object({
         project_root: projectRootSchema,
         task: z.string().min(1).max(30000),
         model: sharedModelInput.model,
         effort: sharedModelInput.effort,
-        timeout_seconds: z.number().int().min(30).max(1800).default(600),
+        timeout_seconds: z
+          .number()
+          .int()
+          .min(30)
+          .max(MAX_MODEL_TIMEOUT_SECONDS)
+          .default(480),
         max_response_chars: sharedModelInput.max_response_chars,
         verification: z
           .enum(["none", "npm-test", "pytest", "cargo-test", "go-test", "dotnet-test"])
           .default("none"),
-        verification_timeout_seconds: z.number().int().min(10).max(900).default(300)
+        allow_untrusted_verification: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Required for non-none verification. Confirms the user explicitly accepts execution of AGY-influenced project code inside the isolated workspace."
+          ),
+        verification_timeout_seconds: z.number().int().min(10).max(600).default(240)
       }),
       annotations: {
         readOnlyHint: false,
@@ -563,7 +598,7 @@ export function createServer() {
         openWorldHint: false
       }
     },
-    async ({ project_root, task, model, effort, timeout_seconds, max_response_chars, verification, verification_timeout_seconds }) => {
+    async ({ project_root, task, model, effort, timeout_seconds, max_response_chars, verification, allow_untrusted_verification, verification_timeout_seconds }) => {
       let root;
       try {
         root = await requireEnabledProject(project_root);
@@ -571,6 +606,11 @@ export function createServer() {
           throw new Error("Another antigravity_execute task is active for this project");
         }
         activeExecutions.add(root);
+        validateExecutionTimeoutBudget(
+          timeout_seconds,
+          verification,
+          verification_timeout_seconds
+        );
         const result = await executeIsolated({
           task,
           projectRoot: root,
@@ -579,7 +619,8 @@ export function createServer() {
           timeoutSeconds: timeout_seconds,
           maxResponseChars: max_response_chars,
           verification,
-          verificationTimeoutSeconds: verification_timeout_seconds
+          verificationTimeoutSeconds: verification_timeout_seconds,
+          allowUntrustedVerification: allow_untrusted_verification
         });
         const after = await bestEffortTranscriptSync(
           root,

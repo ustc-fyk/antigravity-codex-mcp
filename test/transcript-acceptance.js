@@ -14,7 +14,7 @@ if (!projectRoot || !path.isAbsolute(projectRoot)) {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "..");
 const serverEntry = path.join(repositoryRoot, "src", "index.js");
-const client = new Client({ name: "agy-transcript-acceptance", version: "0.3.0" });
+const client = new Client({ name: "agy-transcript-acceptance", version: "0.4.0" });
 const privateKeys = new Set([
   "thinking",
   "thought",

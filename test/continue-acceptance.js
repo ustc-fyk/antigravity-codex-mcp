@@ -12,7 +12,7 @@ if (!projectRoot || !path.isAbsolute(projectRoot)) {
   throw new Error("Pass one absolute project root as the first argument");
 }
 
-const client = new Client({ name: "agy-continue-acceptance", version: "0.3.0" });
+const client = new Client({ name: "agy-continue-acceptance", version: "0.4.0" });
 try {
   await client.connect(
     new StdioClientTransport({

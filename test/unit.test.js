@@ -11,13 +11,17 @@ import {
   isPathWithin,
   parseAgyJson,
   parseAgyStreamJson,
+  runVersionCommand,
   sanitizeDiagnostic
 } from "../src/agy.js";
 import {
   applyStructuredOperations,
   collectChanges,
+  executeIsolated,
+  listRuns,
   shouldCopyRelative
 } from "../src/execution.js";
+import { validateExecutionTimeoutBudget } from "../src/server.js";
 import {
   appendSessionEvent,
   canonicalProjectRoot,
@@ -123,6 +127,20 @@ test("sanitizeDiagnostic redacts account and credential strings", () => {
   assert.ok(!sanitized.includes("person@example.com"));
   assert.ok(!sanitized.includes("abc.def.ghi"));
   assert.ok(!sanitized.includes(fakeGoogleKey));
+});
+
+test("version command has a hard timeout", async () => {
+  const startedAt = Date.now();
+  await assert.rejects(
+    () =>
+      runVersionCommand(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1000)"],
+        100
+      ),
+    /exceeded 100ms timeout/
+  );
+  assert.ok(Date.now() - startedAt < 5_000);
 });
 
 test("transcript filter keeps visible messages and recursively removes private reasoning", () => {
@@ -250,7 +268,7 @@ test("transcript synchronization mirrors only project-visible dialogue and dedup
       path.join(projectRoot, ".antigravity-mcp", ".gitignore"),
       "utf8"
     );
-    assert.match(ignore, /^transcripts\/$/m);
+    assert.match(ignore, /^\*$/m);
     for (const secret of [
       "SECRET_SYSTEM_PROMPT",
       "SECRET_CHAIN_OF_THOUGHT",
@@ -283,6 +301,9 @@ test("isolated copy excludes metadata, dependencies, secrets, and links", () => 
   assert.equal(shouldCopyRelative("src"), true);
   assert.equal(shouldCopyRelative(path.join("src", "index.js")), true);
   assert.equal(shouldCopyRelative(path.join("node_modules", "pkg", "index.js")), false);
+  assert.equal(shouldCopyRelative(path.join("packages", "web", "node_modules", "pkg.js")), false);
+  assert.equal(shouldCopyRelative(path.join("services", "api", ".venv", "python")), false);
+  assert.equal(shouldCopyRelative(path.join("packages", "web", "dist", "bundle.js")), false);
   assert.equal(shouldCopyRelative(path.join(".git", "config")), false);
   assert.equal(shouldCopyRelative(path.join("config", ".env.production")), false);
   assert.equal(shouldCopyRelative(path.join("certs", "client.pem")), false);
@@ -340,6 +361,12 @@ test("dynamic project enable, session persistence, and disable are isolated", as
     assert.equal(settings.customSetting, "preserve-me");
     assert.equal(settings.permissions.allow.length, 2);
     assert.equal(settings.trustedWorkspaces.length, 2);
+    const internalIgnore = await readFile(
+      path.join(projectRoot, ".antigravity-mcp", ".gitignore"),
+      "utf8"
+    );
+    assert.match(internalIgnore, /^\*$/m);
+    assert.ok(!internalIgnore.includes("sessions.jsonl"));
 
     const conversationId = "0a46654e-c16f-4412-aff3-b5bc06495ddd";
     await setActiveConversation(projectRoot, conversationId);
@@ -370,6 +397,32 @@ test("dynamic project enable, session persistence, and disable are isolated", as
   }
 });
 
+test("project enable recovers a settings lock left by a dead process", async () => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "agy-stale-lock-unit-"));
+  const projectRoot = path.join(temporaryRoot, "project");
+  const settingsPath = path.join(temporaryRoot, "settings.json");
+  const lockPath = `${settingsPath}.agy-mcp.lock`;
+  const previousSettingsPath = process.env.ANTIGRAVITY_SETTINGS_PATH;
+  await mkdir(projectRoot, { recursive: true });
+  await writeFile(settingsPath, "{}\n", "utf8");
+  await writeFile(
+    lockPath,
+    `${JSON.stringify({ pid: 2_147_483_647, createdAt: "2000-01-01T00:00:00Z" })}\n`,
+    "utf8"
+  );
+  process.env.ANTIGRAVITY_SETTINGS_PATH = settingsPath;
+
+  try {
+    const enabled = await enableProject(projectRoot);
+    assert.equal(enabled.enabled, true);
+    await assert.rejects(() => readFile(lockPath, "utf8"), /ENOENT/);
+  } finally {
+    if (previousSettingsPath === undefined) delete process.env.ANTIGRAVITY_SETTINGS_PATH;
+    else process.env.ANTIGRAVITY_SETTINGS_PATH = previousSettingsPath;
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("buildSafeChildEnv passes through Linux and standard POSIX environment variables", () => {
   const previousEnv = { ...process.env };
   try {
@@ -386,6 +439,65 @@ test("buildSafeChildEnv passes through Linux and standard POSIX environment vari
     assert.equal(childEnv.XDG_CONFIG_HOME, "/custom/config");
   } finally {
     process.env = previousEnv;
+  }
+});
+
+test("buildSafeChildEnv rejects sensitive opt-in variables without separate approval", () => {
+  const previousNames = process.env.ANTIGRAVITY_PASSTHROUGH_ENV;
+  const previousApproval = process.env.ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH;
+  const previousToken = process.env.TEST_PRIVATE_TOKEN;
+  process.env.ANTIGRAVITY_PASSTHROUGH_ENV = "TEST_PRIVATE_TOKEN";
+  process.env.TEST_PRIVATE_TOKEN = "test-value";
+  delete process.env.ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH;
+  try {
+    assert.throws(() => buildSafeChildEnv(), /Refusing sensitive/);
+    process.env.ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH = "true";
+    assert.equal(buildSafeChildEnv().TEST_PRIVATE_TOKEN, "test-value");
+  } finally {
+    if (previousNames === undefined) delete process.env.ANTIGRAVITY_PASSTHROUGH_ENV;
+    else process.env.ANTIGRAVITY_PASSTHROUGH_ENV = previousNames;
+    if (previousApproval === undefined) {
+      delete process.env.ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH;
+    } else {
+      process.env.ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH = previousApproval;
+    }
+    if (previousToken === undefined) delete process.env.TEST_PRIVATE_TOKEN;
+    else process.env.TEST_PRIVATE_TOKEN = previousToken;
+  }
+});
+
+test("isolated verification requires explicit untrusted-code approval", async () => {
+  await assert.rejects(
+    () =>
+      executeIsolated({
+        task: "test",
+        projectRoot: path.join(tmpdir(), "not-used"),
+        verification: "npm-test"
+      }),
+    /allow_untrusted_verification=true/
+  );
+});
+
+test("execution timeout budget stays below the configured MCP tool timeout", () => {
+  assert.equal(validateExecutionTimeoutBudget(480, "npm-test", 240), 735);
+  assert.throws(
+    () => validateExecutionTimeoutBudget(700, "npm-test", 200),
+    /must not exceed 840s/
+  );
+});
+
+test("listRuns remains read-only when a project has no run directory", async () => {
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "agy-list-runs-unit-"));
+  const projectRoot = path.join(temporaryRoot, "project");
+  await mkdir(projectRoot, { recursive: true });
+  try {
+    assert.deepEqual(await listRuns(projectRoot), []);
+    await assert.rejects(
+      () => stat(path.join(projectRoot, ".antigravity-mcp", "runs")),
+      /ENOENT/
+    );
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
   }
 });
 
@@ -423,4 +535,3 @@ test("applyStructuredOperations preserves executable file mode", async () => {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 });
-

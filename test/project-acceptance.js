@@ -15,7 +15,7 @@ if (!projectRoot || !path.isAbsolute(projectRoot)) {
 }
 
 const sourceProbe = path.join(projectRoot, "agy_acceptance.txt");
-const client = new Client({ name: "agy-project-acceptance", version: "0.3.0" });
+const client = new Client({ name: "agy-project-acceptance", version: "0.4.0" });
 
 try {
   await client.connect(

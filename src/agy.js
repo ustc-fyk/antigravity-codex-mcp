@@ -6,8 +6,12 @@ import path from "node:path";
 const DEFAULT_AGY_BIN = "agy";
 
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
+const MAX_VERSION_BYTES = 64 * 1024;
 const DEFAULT_RESPONSE_CHARS = 12_000;
 const MAX_RESPONSE_CHARS = 50_000;
+const DEFAULT_HEALTH_TIMEOUT_MS = 15_000;
+const SENSITIVE_ENV_NAME_PATTERN =
+  /(AUTH|COOKIE|CREDENTIAL|KEY|PASS|PASSWORD|SECRET|SESSION|TOKEN)/i;
 
 const SAFE_ENV_NAMES = new Set(
   [
@@ -113,6 +117,17 @@ export function buildSafeChildEnv() {
       .filter(Boolean)
   );
   const childEnv = {};
+  const sensitiveExtras = [...extraNames].filter((name) =>
+    SENSITIVE_ENV_NAME_PATTERN.test(name)
+  );
+  const sensitivePassthroughAllowed = /^(1|true|yes)$/i.test(
+    process.env.ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH || ""
+  );
+  if (sensitiveExtras.length && !sensitivePassthroughAllowed) {
+    throw new Error(
+      `Refusing sensitive ANTIGRAVITY_PASSTHROUGH_ENV names: ${sensitiveExtras.join(", ")}. Set ANTIGRAVITY_ALLOW_SENSITIVE_ENV_PASSTHROUGH=true only after explicit risk acceptance.`
+    );
+  }
   for (const [name, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
     const upperName = name.toUpperCase();
@@ -226,6 +241,120 @@ export function sanitizeDiagnostic(text) {
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED_TOKEN]");
 }
 
+function buildTerminationEnv() {
+  const childEnv = {};
+  for (const name of ["COMSPEC", "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR"]) {
+    if (process.env[name] !== undefined) childEnv[name] = process.env[name];
+  }
+  return childEnv;
+}
+
+export async function terminateProcessTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === "win32") {
+    await new Promise((resolve) => {
+      const killer = spawn(
+        "taskkill.exe",
+        ["/pid", String(child.pid), "/t", "/f"],
+        {
+          env: buildTerminationEnv(),
+          shell: false,
+          windowsHide: true,
+          stdio: "ignore"
+        }
+      );
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        try {
+          killer.kill("SIGKILL");
+        } catch {
+          // Fall through to the direct child kill below.
+        }
+        finish();
+      }, 5_000);
+      killer.on("error", finish);
+      killer.on("close", finish);
+    });
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The process may already have exited after taskkill completed.
+    }
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The process may already have exited.
+    }
+  }
+}
+
+export async function runVersionCommand(
+  binary,
+  args = ["--version"],
+  timeoutMs = DEFAULT_HEALTH_TIMEOUT_MS
+) {
+  return await new Promise((resolve, reject) => {
+    const stdout = [];
+    const stderr = [];
+    let capturedBytes = 0;
+    let settled = false;
+    const child = spawn(binary, args, {
+      env: buildSafeChildEnv(),
+      shell: false,
+      windowsHide: true,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const append = (target, chunk) => {
+      capturedBytes += chunk.length;
+      if (capturedBytes <= MAX_VERSION_BYTES) target.push(chunk);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      void terminateProcessTree(child);
+      reject(new Error(`agy --version exceeded ${timeoutMs}ms timeout`));
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => append(stdout, chunk));
+    child.stderr.on("data", (chunk) => append(stderr, chunk));
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (capturedBytes > MAX_VERSION_BYTES) {
+        reject(new Error("agy --version output exceeded the 64 KiB safety limit"));
+        return;
+      }
+      const output = Buffer.concat(stdout).toString("utf8").trim();
+      const diagnostic = Buffer.concat(stderr).toString("utf8").trim();
+      if (code !== 0) {
+        reject(new Error(`agy --version failed (${code}): ${diagnostic}`));
+      } else {
+        resolve(output);
+      }
+    });
+  });
+}
+
 export async function runAgy({
   prompt,
   workingDirectory,
@@ -271,13 +400,14 @@ export async function runAgy({
       env: { ...buildSafeChildEnv(), ...extraEnv },
       shell: false,
       windowsHide: true,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"]
     });
 
     const hardTimeout = setTimeout(() => {
       if (settled) return;
-      child.kill();
       settled = true;
+      void terminateProcessTree(child);
       reject(new Error(`Antigravity CLI exceeded ${timeoutSeconds + 15}s hard timeout`));
     }, (timeoutSeconds + 15) * 1_000);
 
@@ -359,28 +489,14 @@ export async function getAgyHealth() {
     }
   }
 
-  const version = await new Promise((resolve, reject) => {
-    const child = spawn(binary, ["--version"], {
-      env: buildSafeChildEnv(),
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    const stdout = [];
-    const stderr = [];
-    child.stdout.on("data", (chunk) => stdout.push(chunk));
-    child.stderr.on("data", (chunk) => stderr.push(chunk));
-    child.on("error", reject);
-    child.on("close", (code) => {
-      const output = Buffer.concat(stdout).toString("utf8").trim();
-      const diagnostic = Buffer.concat(stderr).toString("utf8").trim();
-      if (code !== 0) {
-        reject(new Error(`agy --version failed (${code}): ${diagnostic}`));
-      } else {
-        resolve(output);
-      }
-    });
-  });
+  const configuredTimeout = Number.parseInt(
+    process.env.AGY_HEALTH_TIMEOUT_MS || "",
+    10
+  );
+  const healthTimeoutMs = Number.isFinite(configuredTimeout)
+    ? Math.min(60_000, Math.max(100, configuredTimeout))
+    : DEFAULT_HEALTH_TIMEOUT_MS;
+  const version = await runVersionCommand(binary, ["--version"], healthTimeoutMs);
 
   return {
     binary,
